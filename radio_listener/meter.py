@@ -24,19 +24,19 @@ LOG = logging.getLogger(__name__)
 def parse_message(line: str) -> dict | None:
     try:
         packet = json.loads(line)
-        model = packet["model"]
-        if model not in {"ERT-SCM", "SCMplus"}:
+        protocol = packet["Type"].lower()
+        if protocol not in {"scm", "scm+"}:
             return None
-        protocol = "scm" if model == "ERT-SCM" else "scm+"
-        meter_id = str(packet.get("id", packet.get("EndpointID", "")))
-        consumption = int(packet["consumption_data" if protocol == "scm" else "Consumption"])
+        message = packet["Message"]
+        meter_id = str(message["ID" if protocol == "scm" else "EndpointID"])
+        consumption = int(message["Consumption"])
         if not meter_id.isdecimal() or consumption < 0:
             return None
         return {
             "meter_id": meter_id,
             "protocol": protocol,
             "consumption_raw": consumption,
-            "endpoint_type": packet.get("ert_type", packet.get("EndpointType")),
+            "endpoint_type": message.get("Type" if protocol == "scm" else "EndpointType"),
         }
     except (ValueError, TypeError, KeyError, AttributeError):
         return None
@@ -54,7 +54,7 @@ def _terminate(process: subprocess.Popen | None) -> None:
         process.wait()
 
 
-def scan_meter(config: Config, stop: threading.Event, queue_path: Path) -> bool:
+def scan_meter(config: Config, stop: threading.Event, queue_path: Path, server_port: int) -> bool:
     """Return True when the configured endpoint was decoded. Never accept a neighbor as ours."""
     deadline = time.monotonic() + config.meter_window_seconds
     decoder = None
@@ -63,9 +63,11 @@ def scan_meter(config: Config, stop: threading.Event, queue_path: Path) -> bool:
     LOG.info("Switching to meter scan for up to %.0f seconds", config.meter_window_seconds)
     try:
         decoder = subprocess.Popen(
-            ["rtl_433", "-d", str(config.device_index), "-f", "912600155",
-             "-s", "2359296", "-g", str(config.gain_db), "-p", str(config.ppm),
-             "-R", "149", "-R", "154", "-F", "json"],
+            ["rtlamr", f"-server=127.0.0.1:{server_port}", "-msgtype=scm,scm+",
+             "-format=json", "-centerfreq=912600155", "-samplerate=2359296",
+             f"-tunergain={config.gain_db}",
+             f"-tunergainmode={str(config.gain_db != 0).lower()}",
+             f"-freqcorrection={config.ppm}"],
             stdout=subprocess.PIPE,
         )
         assert decoder.stdout is not None
@@ -87,11 +89,11 @@ def scan_meter(config: Config, stop: threading.Event, queue_path: Path) -> bool:
                 if reading is None:
                     continue
                 meter_id = reading["meter_id"]
+                if meter_id not in seen:
+                    LOG.info("Meter candidate: ID %s, %s, raw consumption %s", meter_id,
+                             reading["protocol"], reading["consumption_raw"])
+                    seen.add(meter_id)
                 if not config.meter_id:
-                    if meter_id not in seen:
-                        LOG.info("Meter candidate: ID %s, %s, raw consumption %s", meter_id,
-                                 reading["protocol"], reading["consumption_raw"])
-                        seen.add(meter_id)
                     continue
                 if meter_id != config.meter_id:
                     continue
@@ -112,7 +114,11 @@ def scan_meter(config: Config, stop: threading.Event, queue_path: Path) -> bool:
             if found:
                 break
         if not found:
-            LOG.info("Meter window ended without a reading for %s", config.meter_id or "a configured ID")
+            if config.meter_id:
+                LOG.info("Meter window ended without a reading for ID %s; decoded %d candidate IDs",
+                         config.meter_id, len(seen))
+            else:
+                LOG.info("Meter discovery window ended; decoded %d candidate IDs", len(seen))
         return found
     finally:
         _terminate(decoder)

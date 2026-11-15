@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 from pathlib import Path
 import select
 import signal
+import socket
 from statistics import median
 import subprocess
 import sys
@@ -15,29 +15,19 @@ import time
 from .channels import CHANNELS_HZ
 from .adsb import run_adsb
 from .config import load_config
-from .dsp import CENTER_HZ, HOP, SAMPLE_RATE, WidebandReceiver
+from .dsp import HOP, SAMPLE_RATE, WidebandReceiver
 from .logship import LogshipClient
 from .meter import MeterUploader, scan_meter
 from .recording import ChannelRecorder
+from .sdr import RtlTcpServer
 from .worker import RecordingWorker
 
 
 LOG = logging.getLogger(__name__)
 
 
-def read_exact(stream, count: int) -> bytes:
-    chunks = []
-    remaining = count
-    while remaining:
-        chunk = stream.read(remaining)
-        if not chunk:
-            raise EOFError("RTL-SDR stream ended")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
-def read_until(stream, count: int, deadline: float | None, stop: threading.Event) -> bytes | None:
+def read_until(stream: socket.socket, count: int, deadline: float | None,
+               stop: threading.Event) -> bytes | None:
     chunks = []
     remaining = count
     while remaining and not stop.is_set():
@@ -47,7 +37,7 @@ def read_until(stream, count: int, deadline: float | None, stop: threading.Event
         ready, _, _ = select.select([stream], [], [], timeout)
         if not ready:
             continue
-        chunk = os.read(stream.fileno(), remaining)
+        chunk = stream.recv(remaining)
         if not chunk:
             raise EOFError("RTL-SDR stream ended")
         chunks.append(chunk)
@@ -74,11 +64,11 @@ def main() -> int:
     try:
         client = LogshipClient(config)
         for mode, schema, required in (
-            [("gmrs", config.schema, "recording:BlobReference, started_at:DateTime, ended_at:DateTime, duration_seconds:Float64"),
+            [("gmrs", config.schema, "channel:Int64, frequency_hz:Int64, recording:BlobReference, started_at:DateTime, ended_at:DateTime, duration_seconds:Float64, transcript:String"),
              ("meter", config.meter_schema, "meter_id:String and consumption_raw:UInt64 columns")]
             if args.mode == "gmrs" and config.meter_enabled else
             [(args.mode, config.schema if args.mode == "gmrs" else config.adsb_schema,
-              "recording:BlobReference, started_at:DateTime, ended_at:DateTime, duration_seconds:Float64"
+              "channel:Int64, frequency_hz:Int64, recording:BlobReference, started_at:DateTime, ended_at:DateTime, duration_seconds:Float64, transcript:String"
               if args.mode == "gmrs" else "decoded:Json")]
         ):
             if client.ensure_table(mode):
@@ -96,12 +86,11 @@ def main() -> int:
         LOG.warning("Removing incomplete recording from an earlier crash: %s", orphan.name)
         orphan.unlink()
     stop = threading.Event()
-    process: subprocess.Popen | None = None
+    server = RtlTcpServer(config)
+    client_socket: socket.socket | None = None
 
     def shutdown(_signum, _frame) -> None:
         stop.set()
-        if process is not None and process.poll() is None:
-            process.terminate()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
@@ -115,10 +104,19 @@ def main() -> int:
     LOG.info("Monitoring channels %s", ", ".join(map(str, CHANNELS_HZ)))
     try:
         while not stop.is_set():
+            if server.process is None or server.process.poll() is not None:
+                server.stop()
+                try:
+                    server.start()
+                    LOG.info("Started persistent RTL-SDR server on loopback")
+                except OSError as exc:
+                    LOG.error("Could not start RTL-SDR server: %s", exc)
+                    stop.wait(3)
+                    continue
             if config.meter_enabled and time.monotonic() >= next_scan:
                 next_scan = time.monotonic() + config.meter_interval_seconds
                 try:
-                    scan_meter(config, stop, meter_queue)
+                    scan_meter(config, stop, meter_queue, server.port)
                 except (OSError, subprocess.SubprocessError) as exc:
                     if not stop.is_set():
                         LOG.error("Meter scan failed: %s", exc)
@@ -130,19 +128,14 @@ def main() -> int:
                 channel: ChannelRecorder(config, channel, frequency)
                 for channel, frequency in CHANNELS_HZ.items()
             }
-            command = [
-                "rtl_sdr", "-d", str(config.device_index),
-                "-f", str(CENTER_HZ), "-s", str(SAMPLE_RATE),
-                "-g", str(config.gain_db), "-p", str(config.ppm), "-",
-            ]
             capture_start = time.time()
             samples_read = 0
+            capture_failed = False
             try:
-                process = subprocess.Popen(command, stdout=subprocess.PIPE)
+                client_socket = server.connect_gmrs()
                 capture_start = time.time()
-                assert process.stdout is not None
                 while not stop.is_set():
-                    raw = read_until(process.stdout, HOP * 2,
+                    raw = read_until(client_socket, HOP * 2,
                                      next_scan if config.meter_enabled else None, stop)
                     if raw is None:
                         break
@@ -159,24 +152,20 @@ def main() -> int:
                             channel_audio, block_start, common_ratio,
                         )
             except (EOFError, OSError, subprocess.SubprocessError) as exc:
+                capture_failed = True
                 if not stop.is_set():
                     LOG.error("RTL-SDR capture stopped: %s", exc)
             finally:
                 for recorder in recorders.values():
                     recorder.finish(capture_start + samples_read / SAMPLE_RATE)
-                if process is not None:
-                    if process.poll() is None:
-                        process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                    process = None
-            if not stop.is_set() and (not config.meter_enabled or time.monotonic() < next_scan):
+                if client_socket is not None:
+                    client_socket.close()
+                    client_socket = None
+            if not stop.is_set() and capture_failed:
                 stop.wait(3)
     finally:
         stop.set()
+        server.stop()
         worker.join(timeout=10)
         if meter_uploader is not None:
             meter_uploader.join(timeout=10)

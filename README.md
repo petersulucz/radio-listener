@@ -13,7 +13,8 @@ coverage; this version does not monitor them. The channel centers come from the
 
 ## How it works
 
-`rtl_sdr` captures one 1.024 MS/s IQ stream centered at 462.450 MHz. A shared
+`rtl_tcp` keeps the tuner open and supplies a 1.024 MS/s IQ stream centered at
+462.450 MHz to the GMRS decoder. A shared
 FFT and per-channel filters produce 15 narrowband FM audio streams. An adaptive
 power squelch requires a 12 dB rise above the channel's noise floor for at least
 0.12 seconds, and rejects rises shared by most channels. It starts each recording
@@ -24,12 +25,15 @@ model, uploads the blob, and ingests a Logship row. Files remain in the spool
 until Logship accepts the row. The capture path never waits for transcription or
 the network.
 
-With meter scanning enabled, GMRS runs for five minutes, then releases the SDR
-for up to 30 seconds while `rtl_433` decodes ERT SCM and SCM+ packets. With a
+With meter scanning enabled, GMRS runs for five minutes, then releases its stream
+for up to 30 seconds while `rtlamr` connects to the same tuner and decodes ERT
+SCM and SCM+ packets. The tuner is retuned through `rtl_tcp`; the application
+and SDR server remain running. With a
 configured endpoint ID, the scan returns to GMRS as soon as that meter is
 decoded. GMRS transmissions during a meter window can be missed, and an active
 recording is finalized at the switch. An OpenWay AMI7 may not broadcast SCM or
-SCM+ while joined to its OpenWay network; reception must be verified locally.
+SCM+ while joined to its OpenWay network. `rtlamr` does not decode native
+OpenWay network traffic, so reception must be verified locally.
 
 Logship's blob endpoint serves downloads as attachments with
 `application/octet-stream`. The MP3 can be played in a browser after download;
@@ -38,8 +42,9 @@ the Logship frontend does not provide an inline player through this API.
 ## Logship setup
 
 Use an existing Logship account with a **nonzero UUID**. On every startup the
-listener attempts to declare `recording` as `BlobReference`, `started_at` and
-`ended_at` as `DateTime`, and `duration_seconds` as `Float64` before starting
+listener attempts to declare `channel` and `frequency_hz` as `Int64`,
+`recording` as `BlobReference`, `started_at` and `ended_at` as `DateTime`,
+`duration_seconds` as `Float64`, and `transcript` as `String` before starting
 the radio. It uses `LOGSHIP_ADMIN_TOKEN` when provided, or
 `LOGSHIP_TOKEN` otherwise. The token used for declaration needs account
 table-management permission. With an inflow-only token, Logship returns 403;
@@ -58,7 +63,7 @@ The equivalent manual request is:
 curl -X PUT "$LOGSHIP_URL/accounts/$ACCOUNT_ID/tables/gmrs.transmissions" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"columns":[{"name":"recording","type":"BlobReference"},{"name":"started_at","type":"DateTime"},{"name":"ended_at","type":"DateTime"},{"name":"duration_seconds","type":"Float64"}]}'
+  -d '{"columns":[{"name":"channel","type":"Int64"},{"name":"frequency_hz","type":"Int64"},{"name":"recording","type":"BlobReference"},{"name":"started_at","type":"DateTime"},{"name":"ended_at","type":"DateTime"},{"name":"duration_seconds","type":"Float64"},{"name":"transcript","type":"String"}]}'
 ```
 
 Create a personal access token with inflow scope for `gmrs.transmissions` and
@@ -190,7 +195,7 @@ does not need the Whisper model, audio recording, or blob storage. The service
 logs message counts and upload failures.
 
 On a Linux machine with `rtl_sdr`, `ffmpeg`, `whisper-cli`, Python 3.11+, NumPy,
-SciPy, and (for meter scanning) `rtl_433` installed:
+SciPy, and (for meter scanning) `rtlamr` installed:
 
 ```sh
 python -m pip install .

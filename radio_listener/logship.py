@@ -43,10 +43,13 @@ class LogshipClient:
         if mode == "gmrs":
             schema = self.config.schema
             columns = [
+                {"name": "channel", "type": "Int64"},
+                {"name": "frequency_hz", "type": "Int64"},
                 {"name": "recording", "type": "BlobReference"},
                 {"name": "started_at", "type": "DateTime"},
                 {"name": "ended_at", "type": "DateTime"},
                 {"name": "duration_seconds", "type": "Float64"},
+                {"name": "transcript", "type": "String"},
             ]
         elif mode == "adsb":
             schema = self.config.adsb_schema

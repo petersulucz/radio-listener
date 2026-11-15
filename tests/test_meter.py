@@ -12,16 +12,15 @@ from radio_listener.meter import parse_message
 class MeterTests(unittest.TestCase):
     def test_parse_scm_and_scmplus(self):
         self.assertEqual(parse_message(json.dumps({
-            "model": "ERT-SCM", "id": 123, "ert_type": 7,
-            "consumption_data": 456, "mic": "CRC",
+            "Type": "SCM", "Message": {"ID": 123, "Type": 7, "Consumption": 456},
         })), {"meter_id": "123", "protocol": "scm", "consumption_raw": 456,
               "endpoint_type": 7})
         self.assertEqual(parse_message(json.dumps({
-            "model": "SCMplus", "id": 123, "EndpointType": "0x07",
-            "Consumption": 789, "mic": "CRC",
+            "Type": "SCM+", "Message": {"EndpointID": 123, "EndpointType": 7,
+                                       "Consumption": 789},
         })), {"meter_id": "123", "protocol": "scm+", "consumption_raw": 789,
-              "endpoint_type": "0x07"})
-        self.assertIsNone(parse_message('{"model":"other","id":123,"Consumption":1}'))
+              "endpoint_type": 7})
+        self.assertIsNone(parse_message('{"Type":"other","Message":{"ID":123,"Consumption":1}}'))
 
     def test_queue_persists(self):
         with tempfile.TemporaryDirectory() as temporary:

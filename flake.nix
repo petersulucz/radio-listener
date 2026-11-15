@@ -51,7 +51,7 @@
               pkgs.dump1090-fa
               pkgs.ffmpeg
               pkgs.whisper-cpp
-              pkgs.rtl_433
+              pkgs.rtlamr
             ];
             text = ''
               config_dir="''${XDG_CONFIG_HOME:-$HOME/.config}/radio-listener"

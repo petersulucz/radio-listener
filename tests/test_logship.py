@@ -68,10 +68,13 @@ class LogshipTests(unittest.TestCase):
         self.assertTrue(client.ensure_table())
         self.assertEqual(client.table_token, "management-token")
         self.assertEqual(client.table_body, {"columns": [
+            {"name": "channel", "type": "Int64"},
+            {"name": "frequency_hz", "type": "Int64"},
             {"name": "recording", "type": "BlobReference"},
             {"name": "started_at", "type": "DateTime"},
             {"name": "ended_at", "type": "DateTime"},
             {"name": "duration_seconds", "type": "Float64"},
+            {"name": "transcript", "type": "String"},
         ]})
 
     def test_adsb_table_and_batch(self):

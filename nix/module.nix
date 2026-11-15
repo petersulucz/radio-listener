@@ -98,7 +98,7 @@ in {
       wants = [ "network-online.target" ];
       path = [ cfg.sdrPackage pkgs.dump1090-fa ]
         ++ lib.optionals (cfg.mode == "gmrs") [ pkgs.ffmpeg pkgs.whisper-cpp ]
-        ++ lib.optionals (cfg.mode == "gmrs" && cfg.meter.enable) [ pkgs.rtl_433 ];
+        ++ lib.optionals (cfg.mode == "gmrs" && cfg.meter.enable) [ pkgs.rtlamr ];
       serviceConfig = {
         Type = "simple";
         User = "radio-listener";
