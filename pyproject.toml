@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radio-listener"
+version = "0.1.0"
+description = "Continuous GMRS channel receiver and Logship uploader"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "scipy>=1.11", "pyModeS>=3.7,<4"]
+
+[project.scripts]
+radio-listener = "radio_listener.main:main"
+radio-listener-probe = "radio_listener.probe:main"
+
+[tool.setuptools.packages.find]
+include = ["radio_listener*"]

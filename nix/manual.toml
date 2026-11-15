@@ -1,0 +1,17 @@
+spool_dir = "spool"
+model_path = "ggml-base.en.bin"
+
+[radio]
+device_index = 0
+gain_db = 30.0
+ppm = 0
+squelch_db = 12.0
+
+[recording]
+max_spool_bytes = 5000000000
+
+[logship]
+url = "https://your-logship-backend"
+account_id = "11111111-2222-4333-8444-555555555555"
+schema = "gmrs.transmissions"
+adsb_schema = "adsb.messages"
