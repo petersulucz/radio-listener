@@ -104,10 +104,11 @@ systemd service. Reboot after enabling the module so the driver and udev changes
 take effect. If another SDR program needs the DVB driver, adjust that host-wide
 setting before rebuilding.
 
-For GMRS mode, download the [whisper.cpp `base.en` model](https://github.com/ggml-org/whisper.cpp#quick-start)
-to `/var/lib/radio-listener/ggml-base.en.bin`, readable by the `radio-listener`
-user. The service does not download models at runtime. Set `modelPath` if you
-store it elsewhere.
+For GMRS mode, the NixOS module fetches the checksum-pinned
+[whisper.cpp `base.en` model](https://github.com/ggml-org/whisper.cpp/blob/master/models/README.md)
+during the build and points the service at the Nix store copy. No manual model
+installation is needed. Set `modelPath` to use a different local model. ADS-B
+mode does not fetch the model.
 
 Create `/etc/radio-listener/token.env` outside the Nix store with an inflow
 token and optionally a separate table-management token:

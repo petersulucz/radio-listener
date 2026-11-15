@@ -3,9 +3,13 @@
 let
   cfg = config.services.radio-listener;
   toml = pkgs.formats.toml { };
+  whisperModel = pkgs.fetchurl {
+    url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin";
+    hash = "sha256-oDd5yG3zMjB19eeWyyzlAp8A7Ihp7uP9+4l6/jbG0AI=";
+  };
   generatedConfig = toml.generate "radio-listener.toml" {
     spool_dir = "/var/lib/radio-listener/spool";
-    model_path = cfg.modelPath;
+    model_path = if cfg.mode == "gmrs" then cfg.modelPath else "/dev/null";
     radio = {
       device_index = cfg.deviceIndex;
       gain_db = cfg.gainDb;
@@ -48,7 +52,8 @@ in {
     };
     modelPath = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/radio-listener/ggml-base.en.bin";
+      default = toString whisperModel;
+      description = "Whisper model for GMRS transcription. Defaults to a checksum-verified download in the Nix store.";
     };
     deviceIndex = lib.mkOption { type = lib.types.int; default = 0; };
     gainDb = lib.mkOption { type = lib.types.float; default = 30.0; };
@@ -73,7 +78,8 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
-      path = [ cfg.sdrPackage pkgs.dump1090-fa pkgs.ffmpeg pkgs.whisper-cpp ];
+      path = [ cfg.sdrPackage pkgs.dump1090-fa ]
+        ++ lib.optionals (cfg.mode == "gmrs") [ pkgs.ffmpeg pkgs.whisper-cpp ];
       serviceConfig = {
         Type = "simple";
         User = "radio-listener";
