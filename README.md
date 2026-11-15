@@ -57,7 +57,25 @@ Logship cannot change an already inferred column's type. If this table already
 has `started_at` or `ended_at` as `String`, the declaration returns HTTP 409;
 existing rows need a separate migration or a new table before those column
 names can become `DateTime`.
-The equivalent manual request is:
+To declare or merge the columns with the Logship CLI, select the listener's
+account explicitly (the CLI's current account may be different):
+
+```sh
+logsh --account "$ACCOUNT_ID" schema define gmrs.transmissions \
+  --column channel:Int64 \
+  --column frequency_hz:Int64 \
+  --column recording:BlobReference \
+  --column started_at:DateTime \
+  --column ended_at:DateTime \
+  --column duration_seconds:Float64 \
+  --column transcript:String
+logsh --account "$ACCOUNT_ID" query -q ".show table 'gmrs.transmissions'"
+```
+
+Check that the second command lists all seven columns with those types. If an
+existing column has an incompatible type, Logship rejects the declaration;
+drop and recreate the table only if its existing rows can be discarded. The
+equivalent table API request is:
 
 ```sh
 curl -X PUT "$LOGSHIP_URL/accounts/$ACCOUNT_ID/tables/gmrs.transmissions" \
