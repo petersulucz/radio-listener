@@ -1,8 +1,8 @@
 # GMRS and Mode S radio listener
 
-The default `gmrs` mode receives voice transmissions. Select `--mode adsb` to
-receive 1090 MHz Mode S / ADS-B frames instead. One RTL-SDR can run only one
-mode at a time.
+The default `gmrs` mode receives voice transmissions and can periodically
+switch to 900 MHz meter decoding. Select `--mode adsb` to receive 1090 MHz
+Mode S / ADS-B frames instead. One RTL-SDR can receive only one band at a time.
 
 This receive-only service listens continuously to channels **1–7 and 15–22**
 with one RTL-SDR. It records each channel independently, transcribes completed
@@ -24,6 +24,13 @@ model, uploads the blob, and ingests a Logship row. Files remain in the spool
 until Logship accepts the row. The capture path never waits for transcription or
 the network.
 
+With meter scanning enabled, GMRS runs for five minutes, then releases the SDR
+for up to 30 seconds while `rtl_433` decodes ERT SCM and SCM+ packets. With a
+configured endpoint ID, the scan returns to GMRS as soon as that meter is
+decoded. GMRS transmissions during a meter window can be missed, and an active
+recording is finalized at the switch. An OpenWay AMI7 may not broadcast SCM or
+SCM+ while joined to its OpenWay network; reception must be verified locally.
+
 Logship's blob endpoint serves downloads as attachments with
 `application/octet-stream`. The MP3 can be played in a browser after download;
 the Logship frontend does not provide an inline player through this API.
@@ -31,8 +38,9 @@ the Logship frontend does not provide an inline player through this API.
 ## Logship setup
 
 Use an existing Logship account with a **nonzero UUID**. On every startup the
-listener attempts to declare `recording` as a `BlobReference` column before
-starting the radio. It uses `LOGSHIP_ADMIN_TOKEN` when provided, or
+listener attempts to declare `recording` as `BlobReference`, `started_at` and
+`ended_at` as `DateTime`, and `duration_seconds` as `Float64` before starting
+the radio. It uses `LOGSHIP_ADMIN_TOKEN` when provided, or
 `LOGSHIP_TOKEN` otherwise. The token used for declaration needs account
 table-management permission. With an inflow-only token, Logship returns 403;
 the listener logs a warning and continues because the table may already have
@@ -40,13 +48,17 @@ been declared by an administrator. Other declaration errors stop startup.
 Logship does not expose the table definition to an inflow-only token, so that
 token cannot independently verify the column. A missing or mistyped column
 will cause blob-bearing ingestion to fail and recordings to remain in the spool.
+Logship cannot change an already inferred column's type. If this table already
+has `started_at` or `ended_at` as `String`, the declaration returns HTTP 409;
+existing rows need a separate migration or a new table before those column
+names can become `DateTime`.
 The equivalent manual request is:
 
 ```sh
 curl -X PUT "$LOGSHIP_URL/accounts/$ACCOUNT_ID/tables/gmrs.transmissions" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"columns":[{"name":"recording","type":"BlobReference"}]}'
+  -d '{"columns":[{"name":"recording","type":"BlobReference"},{"name":"started_at","type":"DateTime"},{"name":"ended_at","type":"DateTime"},{"name":"duration_seconds","type":"Float64"}]}'
 ```
 
 Create a personal access token with inflow scope for `gmrs.transmissions` and
@@ -61,6 +73,11 @@ contain each accepted raw Mode S frame, downlink format, aircraft address when
 known, common decoded fields, and the complete decoder result. The decoder
 cannot derive every field from every frame. Frames without a position, for
 example, have no latitude or longitude.
+
+Meter scanning also needs inflow scope for `meters.readings`. The app declares
+the table on startup. Rows contain `meter_id`, `protocol`, `endpoint_type`, and
+`consumption_raw`. This is the raw cumulative count; compare it with the meter
+display before assuming its unit or applying a multiplier.
 
 Each row contains `channel`, `frequency_hz`, `started_at`, `ended_at`,
 `duration_seconds`, `transcript`, and the `recording` blob reference. The worker
@@ -85,6 +102,12 @@ host configuration under `/etc/nixos/` rather than in this repository.
           services.radio-listener = {
             enable = true;
             mode = "gmrs"; # or "adsb"
+            meter = {
+              enable = true;
+              intervalSeconds = 300.0;
+              windowSeconds = 30.0;
+              id = ""; # Discover candidate IDs; upload none
+            };
             logshipUrl = "https://your-logship-backend";
             accountId = "your-nonzero-account-uuid";
             tokenFile = "/etc/radio-listener/token.env";
@@ -129,6 +152,11 @@ that condition. Completed uploads are removed locally. Adjust `gainDb`, `ppm`,
 and `squelchDb` in the NixOS module options for your dongle and noise level.
 `squelchDb` is the power margin above the channel's learned noise floor. The
 first second after starting or reconnecting is used to establish that floor.
+Watch `journalctl -u radio-listener -f` for candidate meter IDs, then set
+`services.radio-listener.meter.id` to your meter's decimal endpoint ID and
+rebuild. Confirm the ID by comparing readings with the physical display.
+Nearby meters may also appear. With an empty ID, each scan uses the full window,
+logs unique candidates, and uploads no readings.
 
 ## Manual run and tests
 
@@ -162,7 +190,7 @@ does not need the Whisper model, audio recording, or blob storage. The service
 logs message counts and upload failures.
 
 On a Linux machine with `rtl_sdr`, `ffmpeg`, `whisper-cli`, Python 3.11+, NumPy,
-and SciPy installed:
+SciPy, and (for meter scanning) `rtl_433` installed:
 
 ```sh
 python -m pip install .

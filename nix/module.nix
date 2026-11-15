@@ -22,6 +22,13 @@ let
       account_id = cfg.accountId;
       schema = cfg.schema;
       adsb_schema = cfg.adsbSchema;
+      meter_schema = cfg.meterSchema;
+    };
+    meter = {
+      enabled = cfg.mode == "gmrs" && cfg.meter.enable;
+      interval_seconds = cfg.meter.intervalSeconds;
+      window_seconds = cfg.meter.windowSeconds;
+      id = cfg.meter.id;
     };
   };
 in {
@@ -41,6 +48,17 @@ in {
     accountId = lib.mkOption { type = lib.types.str; };
     schema = lib.mkOption { type = lib.types.str; default = "gmrs.transmissions"; };
     adsbSchema = lib.mkOption { type = lib.types.str; default = "adsb.messages"; };
+    meterSchema = lib.mkOption { type = lib.types.str; default = "meters.readings"; };
+    meter = {
+      enable = lib.mkEnableOption "periodic SCM/SCM+ meter scans between GMRS windows";
+      id = lib.mkOption {
+        type = lib.types.str;
+        default = "";
+        description = "Decimal meter endpoint ID. Empty scans for candidate IDs but uploads no readings.";
+      };
+      intervalSeconds = lib.mkOption { type = lib.types.float; default = 300.0; };
+      windowSeconds = lib.mkOption { type = lib.types.float; default = 30.0; };
+    };
     mode = lib.mkOption {
       type = lib.types.enum [ "gmrs" "adsb" ];
       default = "gmrs";
@@ -74,12 +92,13 @@ in {
     boot.blacklistedKernelModules = [ "dvb_usb_rtl28xxu" ];
 
     systemd.services.radio-listener = {
-      description = "GMRS or Mode S radio listener";
+      description = "GMRS, meter, or Mode S radio listener";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       path = [ cfg.sdrPackage pkgs.dump1090-fa ]
-        ++ lib.optionals (cfg.mode == "gmrs") [ pkgs.ffmpeg pkgs.whisper-cpp ];
+        ++ lib.optionals (cfg.mode == "gmrs") [ pkgs.ffmpeg pkgs.whisper-cpp ]
+        ++ lib.optionals (cfg.mode == "gmrs" && cfg.meter.enable) [ pkgs.rtl_433 ];
       serviceConfig = {
         Type = "simple";
         User = "radio-listener";

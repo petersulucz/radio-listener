@@ -14,8 +14,16 @@ min_seconds = 0.25
 max_seconds = 120.0
 max_spool_bytes = 5000000000
 
+[meter]
+enabled = false
+interval_seconds = 300.0
+window_seconds = 30.0
+# Set after identifying your endpoint from the candidate IDs in the service log.
+id = ""
+
 [logship]
 url = "https://logship.example.com"
 account_id = "11111111-2222-4333-8444-555555555555"
 schema = "gmrs.transmissions"
 adsb_schema = "adsb.messages"
+meter_schema = "meters.readings"

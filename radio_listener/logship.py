@@ -42,10 +42,21 @@ class LogshipClient:
         """Declare the column when authorized; return False if permission blocks it."""
         if mode == "gmrs":
             schema = self.config.schema
-            columns = [{"name": "recording", "type": "BlobReference"}]
+            columns = [
+                {"name": "recording", "type": "BlobReference"},
+                {"name": "started_at", "type": "DateTime"},
+                {"name": "ended_at", "type": "DateTime"},
+                {"name": "duration_seconds", "type": "Float64"},
+            ]
         elif mode == "adsb":
             schema = self.config.adsb_schema
             columns = [{"name": "decoded", "type": "Json"}]
+        elif mode == "meter":
+            schema = self.config.meter_schema
+            columns = [
+                {"name": "meter_id", "type": "String"},
+                {"name": "consumption_raw", "type": "UInt64"},
+            ]
         else:
             raise ValueError(f"Unknown mode: {mode}")
         body = json.dumps({"columns": columns}).encode("utf-8")
@@ -156,5 +167,18 @@ class LogshipClient:
         self._request(
             "PUT", f"/inflow/{self.config.account_id}",
             json.dumps(events, separators=(",", ":")).encode("utf-8"),
+            {"Content-Type": "application/json"},
+        )
+
+    def ingest_meter(self, ingestion_id: str, timestamp: str, reading: dict) -> None:
+        event = [{
+            "ingestionId": ingestion_id,
+            "schema": self.config.meter_schema,
+            "timestamp": timestamp,
+            "data": reading,
+        }]
+        self._request(
+            "PUT", f"/inflow/{self.config.account_id}",
+            json.dumps(event, separators=(",", ":")).encode("utf-8"),
             {"Content-Type": "application/json"},
         )

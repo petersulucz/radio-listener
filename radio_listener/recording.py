@@ -142,7 +142,7 @@ class ChannelRecorder:
             "frequency_hz": self.frequency_hz,
             "started_at": utc_iso(active["start"]),
             "ended_at": utc_iso(end),
-            "duration_seconds": round(duration, 3),
+            "duration_seconds": float(round(duration, 3)),
         }
         atomic_json(self.config.spool_dir / f"{active['id']}.json", manifest)
         LOG.info(

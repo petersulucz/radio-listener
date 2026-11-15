@@ -26,6 +26,11 @@ class Config:
     min_seconds: float = 0.25
     max_seconds: float = 120.0
     max_spool_bytes: int = 5_000_000_000
+    meter_enabled: bool = False
+    meter_interval_seconds: float = 300.0
+    meter_window_seconds: float = 30.0
+    meter_id: str = ""
+    meter_schema: str = "meters.readings"
 
 
 def load_config(path: Path) -> Config:
@@ -33,6 +38,7 @@ def load_config(path: Path) -> Config:
     radio = data.get("radio", {})
     recording = data.get("recording", {})
     logship = data.get("logship", {})
+    meter = data.get("meter", {})
     token = os.environ.get("LOGSHIP_TOKEN", "")
     if not token:
         raise ValueError("LOGSHIP_TOKEN must be set in the service environment")
@@ -43,6 +49,13 @@ def load_config(path: Path) -> Config:
     url = str(logship["url"]).rstrip("/")
     if not url.startswith(("https://", "http://")):
         raise ValueError("logship.url must be an HTTP(S) URL")
+    interval = float(meter.get("interval_seconds", 300.0))
+    window = float(meter.get("window_seconds", 30.0))
+    if interval <= 0 or window <= 0 or window >= interval:
+        raise ValueError("meter window_seconds must be positive and shorter than interval_seconds")
+    meter_id = str(meter.get("id", "")).strip()
+    if meter_id and not meter_id.isdecimal():
+        raise ValueError("meter.id must be a decimal rtlamr endpoint ID")
     return Config(
         spool_dir=Path(data.get("spool_dir", "/var/lib/radio-listener/spool")),
         model_path=Path(data.get("model_path", "/var/lib/radio-listener/ggml-base.en.bin")),
@@ -61,4 +74,9 @@ def load_config(path: Path) -> Config:
         min_seconds=float(recording.get("min_seconds", 0.25)),
         max_seconds=float(recording.get("max_seconds", 120.0)),
         max_spool_bytes=int(recording.get("max_spool_bytes", 5_000_000_000)),
+        meter_enabled=bool(meter.get("enabled", False)),
+        meter_interval_seconds=interval,
+        meter_window_seconds=window,
+        meter_id=meter_id,
+        meter_schema=str(logship.get("meter_schema", "meters.readings")),
     )

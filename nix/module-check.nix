@@ -8,8 +8,10 @@ let
       ({ ... }: {
         boot.loader.grub.device = "nodev";
         fileSystems."/".device = "/dev/null";
+        fileSystems."/".fsType = "ext4";
         services.radio-listener = {
           enable = true;
+          meter.enable = true;
           logshipUrl = "https://example.com";
           accountId = "11111111-2222-4333-8444-555555555555";
           tokenFile = "/etc/radio-listener/token.env";
@@ -18,4 +20,7 @@ let
       })
     ];
   };
-in system.config.systemd.services.radio-listener.serviceConfig.ExecStart
+in builtins.toJSON {
+  execStart = system.config.systemd.services.radio-listener.serviceConfig.ExecStart;
+  path = map toString system.config.systemd.services.radio-listener.path;
+}

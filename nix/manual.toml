@@ -10,8 +10,15 @@ squelch_db = 12.0
 [recording]
 max_spool_bytes = 5000000000
 
+[meter]
+enabled = false
+interval_seconds = 300.0
+window_seconds = 30.0
+id = ""
+
 [logship]
 url = "https://your-logship-backend"
 account_id = "11111111-2222-4333-8444-555555555555"
 schema = "gmrs.transmissions"
 adsb_schema = "adsb.messages"
+meter_schema = "meters.readings"
