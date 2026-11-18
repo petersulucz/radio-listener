@@ -12,6 +12,10 @@ import uuid
 from .config import Config
 
 
+class RetiredBlobError(RuntimeError):
+    """The upload can no longer be attached; its content needs a new blob ID."""
+
+
 class LogshipClient:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -95,7 +99,10 @@ class LogshipClient:
             }).encode("utf-8")
             self._request("PUT", base, body, {"Content-Type": "application/json"})
             status = json.loads(self._request("GET", base))
-        if str(status.get("state", "")).lower() in {"completed", "complete"}:
+        state = str(status.get("state", "")).lower()
+        if state in {"retired", "expired", "cancelled", "canceled"}:
+            raise RetiredBlobError(f"Blob upload {blob_id} is {state}")
+        if state in {"completed", "complete"}:
             return
         committed = int(status.get("committedLength", status.get("length", 0)))
         maximum = int(status["maximumChunkBytes"])

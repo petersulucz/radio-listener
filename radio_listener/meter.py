@@ -55,12 +55,15 @@ def _terminate(process: subprocess.Popen | None) -> None:
 
 
 def scan_meter(config: Config, stop: threading.Event, queue_path: Path, server_port: int) -> bool:
-    """Return True when the configured endpoint was decoded. Never accept a neighbor as ours."""
+    """Queue one reading per ID with an empty filter, or the configured endpoint."""
     deadline = time.monotonic() + config.meter_window_seconds
     decoder = None
     seen: set[str] = set()
     found = False
+    queued = 0
     LOG.info("Switching to meter scan for up to %.0f seconds", config.meter_window_seconds)
+    if not config.meter_id:
+        LOG.info("Meter scan will upload one reading per decoded ID during this window")
     try:
         decoder = subprocess.Popen(
             ["rtlamr", f"-server=127.0.0.1:{server_port}", "-msgtype=scm,scm+",
@@ -89,13 +92,15 @@ def scan_meter(config: Config, stop: threading.Event, queue_path: Path, server_p
                 if reading is None:
                     continue
                 meter_id = reading["meter_id"]
-                if meter_id not in seen:
+                first_seen = meter_id not in seen
+                if first_seen:
                     LOG.info("Meter candidate: ID %s, %s, raw consumption %s", meter_id,
                              reading["protocol"], reading["consumption_raw"])
                     seen.add(meter_id)
                 if not config.meter_id:
-                    continue
-                if meter_id != config.meter_id:
+                    if not first_seen:
+                        continue
+                elif meter_id != config.meter_id:
                     continue
                 timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 connection = open_queue(queue_path)
@@ -109,16 +114,17 @@ def scan_meter(config: Config, stop: threading.Event, queue_path: Path, server_p
                     connection.close()
                 LOG.info("Meter reading: ID %s, %s, raw consumption %s", meter_id,
                          reading["protocol"], reading["consumption_raw"])
+                queued += 1
                 found = True
+                if config.meter_id:
+                    break
+            if found and config.meter_id:
                 break
-            if found:
-                break
-        if not found:
-            if config.meter_id:
-                LOG.info("Meter window ended without a reading for ID %s; decoded %d candidate IDs",
-                         config.meter_id, len(seen))
-            else:
-                LOG.info("Meter discovery window ended; decoded %d candidate IDs", len(seen))
+        if not config.meter_id:
+            LOG.info("Meter window ended; queued %d readings from %d candidate IDs", queued, len(seen))
+        elif not found:
+            LOG.info("Meter window ended without a reading for ID %s; decoded %d candidate IDs",
+                     config.meter_id, len(seen))
         return found
     finally:
         _terminate(decoder)

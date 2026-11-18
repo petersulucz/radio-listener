@@ -1,11 +1,13 @@
 import hashlib
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 from radio_listener.config import Config
-from radio_listener.logship import LogshipClient
+from radio_listener.logship import LogshipClient, RetiredBlobError
+from radio_listener.worker import RecordingWorker
 
 
 class FakeLogship(LogshipClient):
@@ -136,6 +138,47 @@ class LogshipTests(unittest.TestCase):
             }, "hello")
             self.assertEqual(client.events[0]["data"]["recording"], blob_id)
             self.assertEqual(client.events[0]["data"]["transcript"], "hello")
+
+    def test_worker_reuploads_retired_blob_with_new_ids(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            config = Config(
+                spool_dir=directory, model_path=directory / "model.bin",
+                logship_url="https://example.com",
+                account_id="11111111-2222-4333-8444-555555555555", token="test",
+            )
+            old_blob_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+            class RetiredOnceLogship(FakeLogship):
+                def _request(self, method, path, body=None, headers=None, token=None):
+                    if method == "GET" and path.endswith("/" + old_blob_id):
+                        return b'{"state":"retired","length":5,"maximumChunkBytes":1024}'
+                    return super()._request(method, path, body, headers, token)
+
+            client = RetiredOnceLogship(config)
+            with self.assertRaises(RetiredBlobError):
+                client.upload(old_blob_id, directory / "missing.mp3")
+            stem = directory / "recording"
+            stem.with_suffix(".mp3").write_bytes(b"audio")
+            stem.with_suffix(".txt").write_text("hello", encoding="utf-8")
+            manifest = {
+                "id": "recording", "blob_id": old_blob_id,
+                "ingestion_id": "11111111-2222-4333-8444-555555555555",
+                "channel": 1, "frequency_hz": 462562500,
+                "started_at": "2026-11-17T00:00:00Z",
+                "ended_at": "2026-11-17T00:00:01Z",
+                "duration_seconds": 1.0,
+            }
+            manifest_path = stem.with_suffix(".json")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            worker = RecordingWorker(config, threading.Event())
+            worker.client = client
+            worker._process(manifest_path)
+            self.assertEqual(len(client.events), 1)
+            self.assertNotEqual(client.events[0]["data"]["recording"], old_blob_id)
+            self.assertNotEqual(client.events[0]["ingestionId"], manifest["ingestion_id"])
+            self.assertTrue(client.completed)
+            self.assertFalse(manifest_path.exists())
 
 
 if __name__ == "__main__":

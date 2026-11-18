@@ -54,7 +54,7 @@ in {
       id = lib.mkOption {
         type = lib.types.str;
         default = "";
-        description = "Decimal meter endpoint ID. Empty scans for candidate IDs but uploads no readings.";
+        description = "Decimal meter endpoint ID. Empty uploads one reading per decoded ID per scan window.";
       };
       intervalSeconds = lib.mkOption { type = lib.types.float; default = 300.0; };
       windowSeconds = lib.mkOption { type = lib.types.float; default = 30.0; };

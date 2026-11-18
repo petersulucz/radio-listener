@@ -6,11 +6,13 @@ from pathlib import Path
 import subprocess
 import threading
 import time
+import uuid
 import wave
 
 from .config import Config
 from .dsp import AUDIO_RATE
-from .logship import LogshipClient
+from .logship import LogshipClient, RetiredBlobError
+from .recording import atomic_json
 
 
 LOG = logging.getLogger(__name__)
@@ -98,7 +100,16 @@ class RecordingWorker(threading.Thread):
                 " ".join(transcript.split()) or "(empty)",
             )
         transcript = transcript_path.read_text(encoding="utf-8").strip()
-        self.client.upload(manifest["blob_id"], mp3_path)
+        try:
+            self.client.upload(manifest["blob_id"], mp3_path)
+        except RetiredBlobError:
+            old_blob_id = manifest["blob_id"]
+            manifest["blob_id"] = str(uuid.uuid4())
+            manifest["ingestion_id"] = str(uuid.uuid4())
+            atomic_json(manifest_path, manifest)
+            LOG.warning("Retired blob upload %s for recording %s; retrying with a new upload ID",
+                        old_blob_id, manifest["id"])
+            self.client.upload(manifest["blob_id"], mp3_path)
         self.client.ingest(manifest, transcript)
         done_path = stem.with_suffix(".done")
         manifest_path.replace(done_path)
